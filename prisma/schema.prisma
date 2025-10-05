@@ -1,0 +1,239 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  COMPANY_REP
+}
+
+enum TokenType {
+  RENEWABLE
+  NON_RENEWABLE
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum TransactionType {
+  PURCHASE
+  USAGE
+  CARBON_CREDIT_SALE
+  REFUND
+}
+
+model User {
+  id                String              @id @default(cuid())
+  email             String              @unique
+  phone             String?             @unique
+  password          String?             // Nullable for social logins
+  firebaseUid       String?             @unique
+  firstName         String
+  lastName          String
+  role              UserRole            @default(CUSTOMER)
+  emailVerified     Boolean             @default(false)
+  phoneVerified     Boolean             @default(false)
+  profileImage      String?
+  language          String              @default("en") // en, ha, ig, yo, pidgin
+  
+  // Relationships
+  wallet            Wallet?
+  transactions      Transaction[]
+  usageLogs         UsageLog[]
+  carbonCredits     CarbonCredit[]
+  chatSessions      ChatSession[]
+  usageLimits       UsageLimit?
+  notifications     Notification[]
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  
+  @@index([email])
+  @@index([firebaseUid])
+}
+
+model Company {
+  id                String              @id @default(cuid())
+  name              String              @unique
+  slug              String              @unique
+  logo              String?
+  description       String?
+  isActive          Boolean             @default(true)
+  supportEmail      String?
+  supportPhone      String?
+  
+  // Relationships
+  tokens            Token[]
+  transactions      Transaction[]
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  
+  @@index([slug])
+}
+
+model Token {
+  id                String              @id @default(cuid())
+  companyId         String
+  company           Company             @relation(fields: [companyId], references: [id])
+  type              TokenType
+  pricePerUnit      Float               // Price in Naira per kWh
+  isAvailable       Boolean             @default(true)
+  description       String?
+  
+  // Relationships
+  transactions      Transaction[]
+  usageLogs         UsageLog[]
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  
+  @@unique([companyId, type])
+  @@index([companyId])
+}
+
+model Wallet {
+  id                String              @id @default(cuid())
+  userId            String              @unique
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance           Float               @default(0) // In kWh
+  cashBalance       Float               @default(0) // In Naira
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+}
+
+model Transaction {
+  id                String              @id @default(cuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  companyId         String?
+  company           Company?            @relation(fields: [companyId], references: [id])
+  tokenId           String?
+  token             Token?              @relation(fields: [tokenId], references: [id])
+  
+  type              TransactionType
+  status            TransactionStatus   @default(PENDING)
+  amount            Float               // Amount in Naira
+  quantity          Float?              // Quantity in kWh (for token purchases)
+  reference         String              @unique
+  paymentMethod     String?             // paystack, stripe, card, bank
+  metadata          Json?               // Additional payment/transaction data
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  
+  @@index([userId])
+  @@index([reference])
+  @@index([createdAt])
+}
+
+model UsageLog {
+  id                String              @id @default(cuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  tokenId           String
+  token             Token               @relation(fields: [tokenId], references: [id])
+  
+  amount            Float               // kWh consumed
+  timestamp         DateTime            @default(now())
+  metadata          Json?               // Device info, location, etc.
+  
+  createdAt         DateTime            @default(now())
+  
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model UsageLimit {
+  id                String              @id @default(cuid())
+  userId            String              @unique
+  user              User                @relation(fields: [userId], references: [id])
+  
+  dailyLimit        Float?              // kWh per day
+  weeklyLimit       Float?              // kWh per week
+  monthlyLimit      Float?              // kWh per month
+  alertThreshold    Float               @default(0.8) // Alert at 80% usage
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+}
+
+model CarbonCredit {
+  id                String              @id @default(cuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  
+  amount            Float               // Carbon credits earned
+  source            String              // e.g., "renewable_usage"
+  renewableKwh      Float               // kWh of renewable energy that generated this credit
+  isSold            Boolean             @default(false)
+  soldAt            DateTime?
+  soldPrice         Float?              // Price in Naira if sold
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  
+  @@index([userId])
+  @@index([isSold])
+}
+
+model ChatSession {
+  id                String              @id @default(cuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  
+  messages          ChatMessage[]
+  language          String              @default("en")
+  isActive          Boolean             @default(true)
+  ticketCreated     Boolean             @default(false)
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  
+  @@index([userId])
+}
+
+model ChatMessage {
+  id                String              @id @default(cuid())
+  sessionId         String
+  session           ChatSession         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  role              String              // user, assistant, system
+  content           String              @db.Text
+  translated        Boolean             @default(false)
+  translatedFrom    String?
+  
+  createdAt         DateTime            @default(now())
+  
+  @@index([sessionId])
+}
+
+model Notification {
+  id                String              @id @default(cuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  
+  title             String
+  body              String              @db.Text
+  type              String              // usage_alert, payment, carbon_credit, etc.
+  isRead            Boolean             @default(false)
+  data              Json?
+  
+  createdAt         DateTime            @default(now())
+  
+  @@index([userId])
+  @@index([isRead])
+}
